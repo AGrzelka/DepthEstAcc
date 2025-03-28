@@ -1,0 +1,26 @@
+{
+    "Version": "1.0",
+    "NumberOfCameras": 5,
+    "MainCamera": 3,
+    "FocalLength_mm": 7,
+    "SensorWidth_mm": 3,
+    "Resolution_px": 1920,
+    
+    "Linear": {
+        "Generate": 1,
+        "CameraBasline_mm": 50
+    },
+    "Circular": {
+        "Generate": 1,
+        "CameraAngle_deg": 15
+    },
+    
+    "DisplayDistance_mm": 500,
+    "ErrorMapResolution": 100,
+    
+    "DisplayFigures": 1,
+    "DrawSystemOverview": 1,
+    "DrawErrorMap": 1,
+    "DrawCameraMap": 1,
+    "DrawSimplified": 1
+}

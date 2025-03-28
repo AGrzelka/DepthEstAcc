@@ -124,14 +124,6 @@ Example result:
 
 ___
 
-- **DrawIntersectionExample** - switch on generation of intersection example
-
-Example result:
-
-<img src="./doc/Figure_2.png" width="300"/>
-
-___
-
 - **DrawErrorMap** - switch on generation of error map
 
 Example result:

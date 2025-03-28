@@ -5,7 +5,6 @@
     "FocalLength_mm": 7,
     "SensorWidth_mm": 3,
     "Resolution_px": 1920,
-	"KK":false,
     
     "Linear": {
         "Generate": 1,
@@ -21,7 +20,6 @@
     
     "DisplayFigures": 1,
     "DrawSystemOverview": 1,
-    "DrawIntersectionExample": 1,
     "DrawErrorMap": 1,
     "DrawCameraMap": 1,
     "DrawSimplified": 1

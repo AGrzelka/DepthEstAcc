@@ -107,6 +107,11 @@ Example:
 
 *for `DisplayDistance_mm` set to 500, this will define the resolution of the analysis of the scene to be 500/100 = 5 mm*
 
+###Software configuration
+
+- **DrawSimplified** - Choice between calculation methods:
+  * value 0: using full ray-tracing method
+  * value 1: using a simplified analytical model
 
 ### Display options
 
@@ -149,9 +154,5 @@ ___
 
 *Here you can see the map of the scene that shows how many baselines apart are the cameras chosen for best depth estimation of a given part of the scene, the number is color coded and the distances are shown with arrows to the left of the image*
 
-___
 
-- **DrawSimplified** - Choice between calculation methods:
-* value 0: using full ray-tracing method
-* value 1: using a simplified analytical model
 

@@ -151,5 +151,7 @@ ___
 
 ___
 
-- **DrawSimplified** - switch on using a simplified model for regular setups (less precise but much faster)
+- **DrawSimplified** - Choice between calculation methods:
+* value 0: using full ray-tracing method
+* value 1: using a simplified analytical model
 

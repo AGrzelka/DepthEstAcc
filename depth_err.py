@@ -12,6 +12,7 @@ import shapely.ops
 import time
 from shapely.geometry import Polygon
 import json
+import time
 
 #==========================================================================================================================================================
 
@@ -745,7 +746,7 @@ class xVisualiser:
 
 #==========================================================================================================================================================
 
-
+time1 = time.time()
 mpl.rcParams.update({'font.size': 20})
 
 f = open("config.json")
@@ -825,7 +826,7 @@ if DrawErrorMap:
   ErrorMapYlim = (- 1.2 * Distance, 1.2*Distance)
   print("calculateErrorMap...")
   
-  if GenLin:
+  if GenLin and not DrawSimplifiedErrLinear:
     ErrorMapsPolyL = EstimatorL.calculateDeltaDistanceMapsPolygon(ErrorMapXlim, ErrorMapYlim, ErrorMapResolution)    
     ErrorMapL = np.full((ErrorMapResolution, ErrorMapResolution), np.finfo(np.float64).max, dtype=np.float64)
     for CamId in range(NumCams): ErrorMapL = np.minimum(ErrorMapL, ErrorMapsPolyL[CamId])
@@ -841,7 +842,7 @@ if DrawErrorMap:
     fig.savefig("LinearErr.pdf")
     if DisplayFigs: plt.show()
 
-  if GenCir:  
+  if GenCir and not DrawSimplifiedErrCircular:  
     ErrorMapsPolyC = EstimatorC.calculateDeltaDistanceMapsPolygon(ErrorMapXlim, ErrorMapYlim, ErrorMapResolution) 
     ErrorMapC = np.full((ErrorMapResolution, ErrorMapResolution), np.finfo(np.float64).max, dtype=np.float64)
     for CamId in range(NumCams): ErrorMapC = np.minimum(ErrorMapC, ErrorMapsPolyC[CamId])
@@ -918,7 +919,11 @@ if DrawSimplifiedErrLinear:
   ErrorMapXlim = (-Distance, Distance)
   ErrorMapYlim = (- 1.2 * Distance, 1.2*Distance)
 
-  (ErrorMapsSimpleL, CamMapsSimpleL) = EstimatorL.calculateDeltaDistanceMapsSimplifiedForLinear(ErrorMapXlim, ErrorMapYlim, ErrorMapResolution)
+  try:
+    (ErrorMapsSimpleL, CamMapsSimpleL) = (ErrorMapsPolyL, CamMapsPolyL)
+  except:
+    (ErrorMapsSimpleL, CamMapsSimpleL) = EstimatorL.calculateDeltaDistanceMapsSimplifiedForLinear(ErrorMapXlim, ErrorMapYlim, ErrorMapResolution)
+    
   ErrorMapSimpleL = np.full((ErrorMapResolution, ErrorMapResolution), np.finfo(np.float64).max, dtype=np.float64)
   for ErrorMap in ErrorMapsSimpleL: 
     ErrorMapSimpleL = np.minimum(ErrorMapSimpleL, ErrorMap)
@@ -942,7 +947,11 @@ if DrawSimplifiedErrCircular:
   ErrorMapXlim = (-Distance, Distance)
   ErrorMapYlim = (- 1.2 * Distance, 1.2*Distance)
 
-  (ErrorMapsSimpleC, CamMapsPolyC) = EstimatorC.calculateDeltaDistanceMapsSimplifiedForCircular(ErrorMapXlim, ErrorMapYlim, ErrorMapResolution)
+  try:
+    (ErrorMapsSimpleC, CamMapsPolyC) = (ErrorMapsPolyC, CamMapsPolyC)
+  except:
+    (ErrorMapsSimpleC, CamMapsPolyC) = EstimatorC.calculateDeltaDistanceMapsSimplifiedForCircular(ErrorMapXlim, ErrorMapYlim, ErrorMapResolution)
+  
   ErrorMapSimpleC = np.full((ErrorMapResolution, ErrorMapResolution), np.finfo(np.float64).max, dtype=np.float64)
 
   for ErrorMap in ErrorMapsSimpleC: 
@@ -958,3 +967,6 @@ if DrawSimplifiedErrCircular:
   plt.tight_layout()
   plt.savefig("CircularErrSimplified.pdf")
   if DisplayFigs: plt.show()
+
+time2 = time.time()
+print(f"time elapsed: {time2 - time1} seconds")

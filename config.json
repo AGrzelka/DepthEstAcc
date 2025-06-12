@@ -1,7 +1,7 @@
 {
     "Version": "1.0",
-    "NumberOfCameras": 5,
-    "MainCamera": 3,
+    "NumberOfCameras": 7,
+    "MainCamera": 4,
     "FocalLength_mm": 7,
     "SensorWidth_mm": 3,
     "Resolution_px": 1920,
@@ -11,16 +11,16 @@
         "CameraBasline_mm": 50
     },
     "Circular": {
-        "Generate": 1,
+        "Generate": 0,
         "CameraAngle_deg": 15
     },
     
     "DisplayDistance_mm": 500,
-    "ErrorMapResolution": 100,
+    "ErrorMapResolution": 200,
     
-    "DisplayFigures": 1,
-    "DrawSystemOverview": 1,
+    "DisplayFigures": 0,
+    "DrawSystemOverview": 0,
     "DrawErrorMap": 1,
-    "DrawCameraMap": 1,
+    "DrawCameraMap": 0,
     "DrawSimplified": 1
 }

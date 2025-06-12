@@ -113,10 +113,8 @@ ___
 ### Software configuration
 
 - **DrawSimplified** - Choice between calculation methods:
-
-   
-* value 0: using full ray-tracing method
-* value 1: using a simplified analytical model
+    * value 0: using full ray-tracing method
+    * value 1: using a simplified analytical model
 
 ___
 ___

@@ -4,6 +4,7 @@
 import copy
 import math
 import numpy as np
+#import sympy
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import itertools
@@ -12,6 +13,8 @@ import shapely.ops
 import time
 from shapely.geometry import Polygon
 import json
+#import multiprocessing
+#import concurrent.futures
 
 #==========================================================================================================================================================
 
@@ -134,6 +137,10 @@ class xCamera:
     self.DistanceToCamera  = np.linalg.norm(self.CoordXY) #math.sqrt(self.CoordXY[0]**2 + self.CoordXY[1]**2)     
     self.DistanceToPlane   = self.calcDistanceToCameraPlane([0, 0])
 
+    self.RayCastLength = abs(self.DistanceToPlane)
+    if self.RayCastLength < 1e-6: self.RayCastLength = self.calcDistanceToOpticalCenter([0, 0])
+    if self.RayCastLength < 1e-6: self.RayCastLength = self.FocalLength * 1000 # camera essentially at the scene origin
+
     self.RealPixelEdgeCoordsXY = [self.RealSensorBegXY + i * self.SensorVersorXY * self.PixelPitch for i in range(0, self.Resolution + 1)]
     self.FakePixelEdgeCoordsXY = [self.FakeSensorBegXY + i * self.SensorVersorXY * self.PixelPitch for i in range(0, self.Resolution + 1)]
 
@@ -201,7 +208,7 @@ class xCamera:
       self.RegErrors   .append(MaxDistance - MinDistance)
 
   def getFieldOfViewTriangle(self):
-    DefaultLength = self.DistanceToPlane*20
+    DefaultLength = self.RayCastLength*20
     TargetL = self.CoordXY + (np.array(xGeoUtils.rotate2D(self.CameraVersorXY,  self.AngleHalf)) * DefaultLength)
     TargetR = self.CoordXY + (np.array(xGeoUtils.rotate2D(self.CameraVersorXY, -self.AngleHalf)) * DefaultLength)
     return (self.CoordXY, TargetL, TargetR)
@@ -225,7 +232,7 @@ class xCamera:
     Versors = self.calcPixelFieldOfViewVersorsFlex(PointXY)
     if(Versors == None): return None
     LeftVersor, RightVersor = Versors
-    DefaultLength = self.DistanceToPlane*20
+    DefaultLength = self.RayCastLength*20
     Triangle = (self.CoordXY, self.CoordXY + LeftVersor*DefaultLength, self.CoordXY + RightVersor*DefaultLength)
     return Triangle
 
@@ -254,14 +261,16 @@ class xCamera:
       elif(IdxB == self.Resolution): IdxA = self.Resolution-1
       else: IdxB = IdxB + 1
 
-    DefaultLength = self.DistanceToPlane*20
+    DefaultLength = self.RayCastLength*20
     Triangle = (self.CoordXY, self.CoordXY+self.RaysVersor[IdxA]*DefaultLength, self.CoordXY+self.RaysVersor[IdxB]*DefaultLength)
     return Triangle
 
   def drawCamera(self, Axes, Color):   
-    DefaultLength = self.DistanceToPlane*2
+    DefaultLength = self.RayCastLength*2
     #optical center
     plt.scatter(self.CoordXY[0], self.CoordXY[1], s = DefaultLength/200, color = Color)
+    #camera number label
+    Axes.annotate(str(self.ID), (self.CoordXY[0], self.CoordXY[1]), textcoords="offset points", xytext=(6, 6), fontsize=9, fontweight="bold", color=Color)
     #central line
     TargetC = self.CoordXY + self.CameraVersorXY * DefaultLength
     plt.plot([self.CoordXY[0], TargetC[0]], [self.CoordXY[1], TargetC[1]], color = Color, linewidth=1.5, linestyle="--")
@@ -283,7 +292,7 @@ class xCamera:
     return
 
   def drawRays(self, Axes, Color):
-      DefaultLength = self.DistanceToPlane*2
+      DefaultLength = self.RayCastLength*2
       plt.plot([self.FakeSensorBegXY[0], self.FakeSensorEndXY[0]], [self.FakeSensorBegXY[1], self.FakeSensorEndXY[1]], color = "black")
       for i in range(0, self.Resolution + 1):
           FakePixelEdgeCoordXY = self.FakePixelEdgeCoordsXY[i]
@@ -298,7 +307,7 @@ class xCamera:
     for IntersectionsCam in self.Intersections.values():
       for IntersectionsMyRay in IntersectionsCam.values():
         for IntersectionOtherRay in IntersectionsMyRay.values():        
-          plt.scatter(IntersectionOtherRay[0], IntersectionOtherRay[1], s = self.DistanceToPlane/200, color = Color)
+          plt.scatter(IntersectionOtherRay[0], IntersectionOtherRay[1], s = self.RayCastLength/200, color = Color)
     return
 
   def drawRegions(self, Axes):
@@ -383,6 +392,30 @@ class xArrangement:
   def generateSportHall(self, Radius, Angle, NumCams):
     Cameras      = []
     #TODO
+    return Cameras
+
+  def generateCustom(self, CamerasSpec):
+    # CamerasSpec - list of dicts: {"X_mm": .., "Y_mm": .., "Angle_deg": ..,
+    #                                "FocalLength_mm": optional, "SensorWidth_mm": optional}
+    # Angle_deg convention: 0 deg = "up" (+Y), angle grows CLOCKWISE (compass/azimuth style).
+    # Internal xCamera.Rotation convention: 0 rad = "+X" (right), angle grows CCW (standard math angle).
+    # Conversion between the two: Rotation_rad = radians(90 - Angle_deg)
+    # FocalLength_mm / SensorWidth_mm are optional per camera; if a camera doesn't specify one,
+    # it falls back to the arrangement-wide value (self.FocalLength / self.SensorWidth).
+    Cameras = []
+    for i, CamSpec in enumerate(CamerasSpec):
+      CoordX      = CamSpec['X_mm']
+      CoordY      = CamSpec['Y_mm']
+      AzimuthDeg  = CamSpec['Angle_deg']
+      FocalLength = CamSpec.get('FocalLength_mm', self.FocalLength)
+      SensorWidth = CamSpec.get('SensorWidth_mm', self.SensorWidth)
+      Resolution = CamSpec.get('Resolution_px', self.Resolution)
+      Rotation    = math.radians(90 - AzimuthDeg)
+      Camera = xCamera(i)
+      Camera.setParams(FocalLength, SensorWidth, Resolution)
+      Camera.setCoords((CoordX, CoordY), Rotation)
+      Camera.calculateDerrived()
+      Cameras.append(Camera)
     return Cameras
 
 #==========================================================================================================================================================
@@ -571,6 +604,10 @@ class xEstimator:
 
           dif_beta = math.degrees(math.acos((DistancePointToCamA*DistancePointToCamA + DistancePointToCamB*DistancePointToCamB - DistanceCamToCam*DistanceCamToCam)/(2*DistancePointToCamA*DistancePointToCamB))) #% 90
 
+          VectorPointToCamA = CameraA.CoordXY - PointXY
+          VectorPointToCamB = CameraB.CoordXY - PointXY
+          dif_beta = abs(math.degrees(xGeoUtils.calcAngleBetwenVectors(VectorPointToCamA, VectorPointToCamB)))
+
           h_camA = DistancePointToCamA * math.tan(math.radians(fov_step_camA))
           h_camB = DistancePointToCamB * math.tan(math.radians(fov_step_camB))
           
@@ -623,12 +660,14 @@ class xVisualiser:
     Axes.set_ylabel(self.DefaultAxisLabel)
     return
 
-  def drawSystem(self, Axes):    
+  def drawSystem(self, Axes, highlight_id=None):
     Axes.scatter(0, 0, s = 40, color = "black")
     cmap = plt.get_cmap("tab10") if len(self.Cameras)<=10 else plt.get_cmap("tab20")
     for i, Camera in enumerate(self.Cameras):
       CameraColor = cmap(i)
       Camera.drawCamera(Axes, CameraColor)
+      if highlight_id is not None and Camera.ID == highlight_id:
+        Axes.scatter(Camera.CoordXY[0], Camera.CoordXY[1], s=300, facecolors="none", edgecolors=CameraColor, linewidths=2.5, zorder=5)
     self.setLabels(Axes)
     return
 
@@ -664,12 +703,17 @@ class xVisualiser:
       Axes.add_patch(PolyBody)
     return      
 
-  def drawErrorMap(self, Axes, ErrorMap, ErrorMapXlim, ErrorMapYlim):
+  def drawErrorMap(self, Axes, ErrorMap, ErrorMapXlim, ErrorMapYlim, show_cbar = True):
     cmap = plt.get_cmap("jet")
     ColorMin = 0
     ColorMax = cmap.N
     Selector = ErrorMap != np.finfo(np.float64).max
     SelErr   = np.asarray(ErrorMap)[Selector]
+    if SelErr.size == 0:
+      print("WARNING: drawErrorMap - no valid (overlapping) points found in the analyzed region, skipping")
+      Axes.text(0.5, 0.5, "No valid depth estimation\nin analyzed region", ha="center", va="center", transform=Axes.transAxes)
+      Axes.imshow(np.zeros((ErrorMap.shape[0], ErrorMap.shape[1], 4)), origin="lower", extent=(ErrorMapXlim[0], ErrorMapXlim[1], ErrorMapYlim[0], ErrorMapYlim[1]))
+      return None
     ErrorMin = np.min(SelErr)
     ErrorMax = np.max(SelErr)
     ColorIndex = ColorMin + ((ErrorMap-ErrorMin)/(ErrorMax-ErrorMin))*ColorMax
@@ -683,9 +727,9 @@ class xVisualiser:
     Axes.imshow(ErrorImg, origin="lower", extent=(ErrorMapXlim[0], ErrorMapXlim[1], ErrorMapYlim[0], ErrorMapYlim[1]))#, aspect="auto")  
     norm = mpl.colors.Normalize(vmin=ErrorMin, vmax=ErrorMax)    
     mappable = mpl.cm.ScalarMappable(cmap=cmap, norm=norm)
-    cbar = Axes.figure.colorbar(mappable, ax=ax)
-    cbar.set_label("Distance error [mm]")
-    cbar.ax.locator_params(nbins=10)
+    if show_cbar: cbar = Axes.figure.colorbar(mappable, ax=ax)
+    if show_cbar: cbar.set_label("Distance error [mm]")
+    if show_cbar: cbar.ax.locator_params(nbins=10)
     return mappable
 
   def drawDiffMap(self, Axes, ErrorMap, Mask, ErrorMapXlim, ErrorMapYlim):
@@ -712,8 +756,8 @@ class xVisualiser:
     cbar.ax.locator_params(nbins=10)
     return
 
-  def drawCamMap(self, Axes, CamMap, ErrorMapXlim, ErrorMapYlim, ColorReverse = False):
-
+  def drawCamMap(self, Axes, CamMap, ErrorMapXlim, ErrorMapYlim, ColorReverse = False, highlight_id=None):
+    #cmap = plt.get_cmap("jet")
     cmap = plt.get_cmap("tab10") if len(self.Cameras)<=10 else plt.get_cmap("tab20_r")
     if ColorReverse :
       cmap = plt.get_cmap("tab10_r") if len(self.Cameras)<=10 else plt.get_cmap("tab20_r")
@@ -721,6 +765,15 @@ class xVisualiser:
     ColorMax = cmap.N
     Selector = CamMap != 255
     SelErr   = np.asarray(CamMap)[Selector]
+    if SelErr.size == 0:
+      print("WARNING: drawCamMap - no valid (overlapping) points found in the analyzed region, skipping")
+      Axes.text(0.5, 0.5, "No valid depth estimation\nin analyzed region", ha="center", va="center", transform=Axes.transAxes)
+      for i, Camera in enumerate(self.Cameras):
+        CameraColor = cmap(i)
+        Camera.drawCamera(Axes, CameraColor)
+        if highlight_id is not None and Camera.ID == highlight_id:
+          Axes.scatter(Camera.CoordXY[0], Camera.CoordXY[1], s=300, facecolors="none", edgecolors=CameraColor, linewidths=2.5, zorder=5)
+      return None
     ErrorMin = np.min(SelErr)
     ErrorMax = np.max(SelErr)
 
@@ -731,6 +784,8 @@ class xVisualiser:
     for i, Camera in enumerate(self.Cameras):
       CameraColor = cmap(i)
       Camera.drawCamera(Axes, CameraColor)
+      if highlight_id is not None and Camera.ID == highlight_id:
+        Axes.scatter(Camera.CoordXY[0], Camera.CoordXY[1], s=300, facecolors="none", edgecolors=CameraColor, linewidths=2.5, zorder=5)
       
       for y in range(CamMap.shape[1]):
         for x in range(CamMap.shape[0]):
@@ -745,12 +800,12 @@ class xVisualiser:
 
 #==========================================================================================================================================================
 
-
+time1 = time.time()
 mpl.rcParams.update({'font.size': 20})
 
 f = open("config.json")
 jsonparam = json.load(f)
-f.close
+f.close()
 
 #camera parameters
 FocalLength = jsonparam['FocalLength_mm'] # 35mm
@@ -762,14 +817,31 @@ Distance  = jsonparam['DisplayDistance_mm'] #1500 mm
 
 json_cir = jsonparam['Circular']
 json_lin = jsonparam['Linear']
+json_cus = jsonparam.get('Custom', {'Generate': 0, 'Cameras': []})
 
 GenCir = json_cir['Generate']
 GenLin = json_lin['Generate']
+GenCus = json_cus.get('Generate', 0)
 
 Angle     =  math.radians(json_cir['CameraAngle_deg']) #math.radians(30)
 Baseline  = json_lin['CameraBasline_mm'] #180 Distance * math.sin(Angle)   mm
 NumCams   = jsonparam['NumberOfCameras'] #2
 MainCamId = jsonparam['MainCamera'] #int(NumCams/2)
+
+CustomCamerasSpec = json_cus.get('Cameras', [])
+NumCamsX  = len(CustomCamerasSpec)
+#MainCameraCalculateX = json_cus.get('OnlyMainCameraCalculate', False)
+MainCameraCalculateX = jsonparam.get('OnlyMainCameraCalculate', False)
+
+# Which camera(s) the per-camera plots (error map, cam map) are generated for.
+# Linear/Circular use NumberOfCameras, Custom uses the length of the Cameras list.
+def selectCamIds(NumCamsInSystem):
+  if MainCameraCalculateX:
+    return [MainCamId] if MainCamId < NumCamsInSystem else [0]
+  return list(range(NumCamsInSystem))
+
+CamIdsToDraw  = selectCamIds(NumCams)   # Linear, Circular
+CamIdsToDrawX = selectCamIds(NumCamsX)  # Custom
 
 #plot parameters
 Xlim=(-1.2*Distance, 1.2*Distance)
@@ -785,11 +857,18 @@ EstimatorC  = xEstimator (CamerasC)
 VisualiserL = xVisualiser(EstimatorL)
 VisualiserC = xVisualiser(EstimatorC)
 
+if GenCus:
+  CamerasX    = Arrangement.generateCustom(CustomCamerasSpec)
+  EstimatorX  = xEstimator (CamerasX)
+  VisualiserX = xVisualiser(EstimatorX)
+
 DefaultFigSize            = (12,12)
 DisplayFigs               = jsonparam['DisplayFigures']
 DrawSystemOverview        = jsonparam['DrawSystemOverview']
+DrawIntersectionExample = jsonparam.get('DrawIntersectionExample', 0)
 DrawErrorMap              = jsonparam['DrawErrorMap']
 DrawCamMap                = jsonparam['DrawCameraMap']
+DrawDepthRegion         = jsonparam.get('DrawDepthRegion', 0)
 
 DrawSimplifiedErrLinear   = jsonparam['DrawSimplified'] & GenLin
 DrawSimplifiedErrCircular = jsonparam['DrawSimplified'] & GenCir
@@ -802,7 +881,7 @@ if DrawSystemOverview:
   if GenLin:
     fig = plt.figure(figsize=DefaultFigSize)
     ax  = fig.add_subplot(1,1,1)
-    ax.set_title("Considered system")
+    ax.set_title("Considered system (Linear)")
     VisualiserL.drawSystem(ax)
     ax.set(xlim=Xlim, ylim=Ylim)
     ax.grid()
@@ -812,12 +891,67 @@ if DrawSystemOverview:
   if GenCir:
     fig = plt.figure(figsize=DefaultFigSize)
     ax  = fig.add_subplot(1,1,1)
-    ax.set_title("Considered system")
+    ax.set_title("Considered system (Circular)")
     VisualiserC.drawSystem(ax)
     ax.set(xlim=Xlim, ylim=Ylim)
     ax.grid()
     plt.tight_layout()
     if DisplayFigs: plt.show()    
+
+  if GenCus:
+    #for CamId in CamIdsToDrawX:
+    fig = plt.figure(figsize=DefaultFigSize)
+    ax  = fig.add_subplot(1,1,1)
+    ax.set_title("Considered system (Custom)") # - Camera {}".format(CamId))
+    VisualiserX.drawSystem(ax)#, highlight_id=CamId)
+    ax.set(xlim=Xlim, ylim=Ylim)
+    ax.grid()
+    plt.tight_layout()
+    plt.savefig("CustomOverview.pdf")#.format(CamId))
+    if DisplayFigs: plt.show()
+
+if DrawIntersectionExample:
+  print("DrawIntersectionExample...")
+  IntersectionPoint = np.array((-200,50))
+  Xlim=(-1.2*Distance, 0.4*Distance)
+  Ylim=(-0.8*Distance, 0.8*Distance)
+
+  if GenLin:
+    fig = plt.figure(figsize=DefaultFigSize)
+    ax  = fig.add_subplot(1,1,1)
+    ax.set_title("Intersections (Linear)")
+    VisualiserL.drawSystem(ax)
+    VisualiserL.drawIntersection(ax, IntersectionPoint, Xlim, Ylim)
+    ax.set(xlim=Xlim, ylim=Ylim)
+    ax.grid()
+    plt.tight_layout()
+    plt.savefig("IntersectionExampleLinear.pdf")
+    if DisplayFigs: plt.show()
+
+  if GenCir:
+    fig = plt.figure(figsize=DefaultFigSize)
+    ax  = fig.add_subplot(1,1,1)
+    ax.set_title("Intersections (Circular)")
+    VisualiserC.drawSystem(ax)
+    VisualiserC.drawIntersection(ax, IntersectionPoint, Xlim, Ylim)
+    ax.set(xlim=Xlim, ylim=Ylim)
+    ax.grid()
+    plt.tight_layout()
+    plt.savefig("IntersectionExampleCircular.pdf")
+    if DisplayFigs: plt.show()
+
+  if GenCus:
+    #for CamId in CamIdsToDrawX:
+    fig = plt.figure(figsize=DefaultFigSize)
+    ax  = fig.add_subplot(1,1,1)
+    ax.set_title("Intersections (Custom)")# - Camera {}".format(CamId))
+    VisualiserX.drawSystem(ax)#, highlight_id=CamId)
+    VisualiserX.drawIntersection(ax, IntersectionPoint, Xlim, Ylim)
+    ax.set(xlim=Xlim, ylim=Ylim)
+    ax.grid()
+    plt.tight_layout()
+    plt.savefig("IntersectionExampleCustom.pdf")#.format(CamId))
+    if DisplayFigs: plt.show()
 
 if DrawErrorMap:
   print("DrawErrorMap...")
@@ -825,14 +959,14 @@ if DrawErrorMap:
   ErrorMapYlim = (- 1.2 * Distance, 1.2*Distance)
   print("calculateErrorMap...")
   
-  if GenLin:
+  if GenLin and not DrawSimplifiedErrLinear:
     ErrorMapsPolyL = EstimatorL.calculateDeltaDistanceMapsPolygon(ErrorMapXlim, ErrorMapYlim, ErrorMapResolution)    
     ErrorMapL = np.full((ErrorMapResolution, ErrorMapResolution), np.finfo(np.float64).max, dtype=np.float64)
     for CamId in range(NumCams): ErrorMapL = np.minimum(ErrorMapL, ErrorMapsPolyL[CamId])
     
     fig = plt.figure(figsize=DefaultFigSize)
     ax  = fig.add_subplot(1,1,1)
-    ax.set_title("Error map")
+    ax.set_title("Error map (Linear)")
     a = VisualiserL.drawErrorMap(ax, ErrorMapL, ErrorMapXlim, ErrorMapYlim)
     VisualiserL.drawSystem(ax)
     ax.set(xlim=Xlim, ylim=Ylim)
@@ -841,21 +975,72 @@ if DrawErrorMap:
     fig.savefig("LinearErr.pdf")
     if DisplayFigs: plt.show()
 
-  if GenCir:  
+  if GenCir and not DrawSimplifiedErrCircular:  
     ErrorMapsPolyC = EstimatorC.calculateDeltaDistanceMapsPolygon(ErrorMapXlim, ErrorMapYlim, ErrorMapResolution) 
     ErrorMapC = np.full((ErrorMapResolution, ErrorMapResolution), np.finfo(np.float64).max, dtype=np.float64)
-    for CamId in range(NumCams): ErrorMapC = np.minimum(ErrorMapC, ErrorMapsPolyC[CamId])
 
-    fig = plt.figure(figsize=DefaultFigSize)
-    ax  = fig.add_subplot(1,1,1)
-    ax.set_title("Error map")
-    VisualiserC.drawErrorMap(ax, ErrorMapC, ErrorMapXlim, ErrorMapYlim)
-    VisualiserC.drawSystem(ax)
-    ax.set(xlim=Xlim, ylim=Ylim)
-    ax.grid()
-    fig.tight_layout()
-    fig.savefig("CircularErr.pdf")
+    if DrawDepthRegion:
+      for CamId in range(NumCams): 
+        ErrorMapC = np.minimum(ErrorMapC, ErrorMapsPolyC[CamId])
+      fig = plt.figure(figsize=DefaultFigSize)
+      ax  = fig.add_subplot(1,1,1)
+      ax.set_title("Depth region (Circular)")
+      VisualiserC.drawErrorMap(ax, ErrorMapC, ErrorMapXlim, ErrorMapYlim, 0)
+      VisualiserC.drawSystem(ax)
+      ax.set(xlim=Xlim, ylim=Ylim)
+      ax.grid()
+      fig.tight_layout()
+      fig.savefig("CircularDepthRegion.pdf")
+      if DisplayFigs: plt.show() 
+
+    for CamId in CamIdsToDraw: 
+      #ErrorMapC = np.minimum(ErrorMapC, ErrorMapsPolyC[CamId])
+      ErrorMapC = ErrorMapsPolyC[CamId]
+      fig = plt.figure(figsize=DefaultFigSize)
+      ax  = fig.add_subplot(1,1,1)
+      ax.set_title("Error map - Camera {} (Circular)".format(CamId))
+      VisualiserC.drawErrorMap(ax, ErrorMapC, ErrorMapXlim, ErrorMapYlim)
+      VisualiserC.drawSystem(ax, highlight_id=CamId)
+      ax.set(xlim=Xlim, ylim=Ylim)
+      ax.grid()
+      fig.tight_layout()
+      fig.savefig("CircularErr_Cam{}.pdf".format(CamId))
+      if DisplayFigs: plt.show()
+
+  if GenCus:
+    ErrorMapsPolyX = EstimatorX.calculateDeltaDistanceMapsPolygon(ErrorMapXlim, ErrorMapYlim, ErrorMapResolution)
+    ErrorMapC = np.full((ErrorMapResolution, ErrorMapResolution), np.finfo(np.float64).max, dtype=np.float64)
+
+    # Main output: error map(s) per individual camera (no minimization across cameras).
+    if DrawDepthRegion:
+      for CamId in range(NumCamsX): ErrorMapC = np.minimum(ErrorMapC, ErrorMapsPolyX[CamId])
+      fig = plt.figure(figsize=DefaultFigSize)
+      ax  = fig.add_subplot(1,1,1)
+      ax.set_title("Depth region (Custom)")
+      VisualiserX.drawErrorMap(ax, ErrorMapC, ErrorMapXlim, ErrorMapYlim, 0)
+      VisualiserX.drawSystem(ax)
+      ax.set(xlim=Xlim, ylim=Ylim)
+      ax.grid()
+      fig.tight_layout()
+      fig.savefig("CustomDepthRegion.pdf".format(CamId))
+      if DisplayFigs: plt.show() 
+
+
+
+    for CamId in CamIdsToDrawX:
+      fig = plt.figure(figsize=DefaultFigSize)
+      ax  = fig.add_subplot(1,1,1)
+      ax.set_title("Error map - Camera {} (Custom)".format(CamId))
+      VisualiserX.drawErrorMap(ax, ErrorMapsPolyX[CamId], ErrorMapXlim, ErrorMapYlim)
+      VisualiserX.drawSystem(ax, highlight_id=CamId)
+      ax.set(xlim=Xlim, ylim=Ylim)
+      ax.grid()
+      fig.tight_layout()
+      fig.savefig("CustomErr_Cam{}.pdf".format(CamId))
     if DisplayFigs: plt.show()
+
+    ErrorMapX_DebugMin = np.full((ErrorMapResolution, ErrorMapResolution), np.finfo(np.float64).max, dtype=np.float64)
+    for CamId in range(NumCamsX): ErrorMapX_DebugMin = np.minimum(ErrorMapX_DebugMin, ErrorMapsPolyX[CamId])
 
 if DrawCamMap:
   print("DrawErrorMap...")
@@ -867,17 +1052,18 @@ if DrawCamMap:
   
   if GenLin:
     (ErrorMapsPolyL, CamMapsPolyL) = EstimatorL.calculateDeltaDistanceMapsSimplifiedForLinear(ErrorMapXlim, ErrorMapYlim, ErrorMapResolution)
-    CamMapL = CamMapsPolyL[MainCamId]
-    fig = plt.figure(figsize=DefaultFigSize)
-    ax  = fig.add_subplot(1,1,1)
-    ax.set_title("Best pair for main camera")
-    VisualiserL.drawCamMap(ax, CamMapL, ErrorMapXlim, ErrorMapYlim)
-    VisualiserL.drawSystem(ax)
-    ax.set(xlim=Xlim, ylim=Ylim)
-    ax.grid()
-    plt.tight_layout()
-    plt.savefig("LinearCam.pdf")
-    if DisplayFigs: plt.show()
+    for CamId in CamIdsToDraw: 
+      CamMapL = CamMapsPolyL[CamId]
+      fig = plt.figure(figsize=DefaultFigSize)
+      ax  = fig.add_subplot(1,1,1)
+      ax.set_title("Best pair for Camera {} (Linear)".format(CamId))
+      VisualiserL.drawCamMap(ax, CamMapL, ErrorMapXlim, ErrorMapYlim)
+      VisualiserL.drawSystem(ax, highlight_id=CamId)
+      ax.set(xlim=Xlim, ylim=Ylim)
+      ax.grid()
+      plt.tight_layout()
+      plt.savefig("LinearCam_Cam{}.pdf".format(CamId))
+      if DisplayFigs: plt.show()
 
     CamMapLG = EstimatorL.recalculateDeltaDistanceMapsSimplifiedForLinearAndAllCameras(ErrorMapXlim, ErrorMapYlim, ErrorMapResolution,CamMapsPolyL)
 
@@ -898,18 +1084,36 @@ if DrawCamMap:
 
     (ErrorMapsPolyC, CamMapsPolyC) = EstimatorC.calculateDeltaDistanceMapsSimplifiedForCircular(ErrorMapXlim, ErrorMapYlim, ErrorMapResolution)
     CamMapC = CamMapsPolyC[MainCamId]
+    for CamId in CamIdsToDraw: 
 
-    fig = plt.figure(figsize=DefaultFigSize)
-    ax  = fig.add_subplot(1,1,1)
-    ax.set_title("Best pair for main camera")
-    VisualiserC.drawCamMap(ax, CamMapC, ErrorMapXlim, ErrorMapYlim)
-    VisualiserC.drawSystem(ax)
-    ax.set(xlim=Xlim, ylim=Ylim)
-    ax.grid()
-    plt.tight_layout()
-    plt.savefig("CircularCam.pdf")
-    if DisplayFigs: plt.show()
+      CamMapC = CamMapsPolyC[CamId]
+      fig = plt.figure(figsize=DefaultFigSize)
+      ax  = fig.add_subplot(1,1,1)
+      ax.set_title("Best pair for Camera {} (Circular)".format(CamId))
+      VisualiserC.drawCamMap(ax, CamMapC, ErrorMapXlim, ErrorMapYlim)
+      VisualiserC.drawSystem(ax, highlight_id=CamId)
+      ax.set(xlim=Xlim, ylim=Ylim)
+      ax.grid()
+      plt.tight_layout()
+      plt.savefig("CircularCam_Cam{}.pdf".format(CamId))
+      if DisplayFigs: plt.show()
 
+  if GenCus:
+    # Note: uses the generic (angle-based) simplified estimator, which works for arbitrary
+    # camera positions/orientations - not tied to any specific arrangement shape.
+    (ErrorMapsPolyX, CamMapsPolyX) = EstimatorX.calculateDeltaDistanceMapsSimplifiedForCircular(ErrorMapXlim, ErrorMapYlim, ErrorMapResolution)
+
+    for CamId in CamIdsToDrawX:
+      fig = plt.figure(figsize=DefaultFigSize)
+      ax  = fig.add_subplot(1,1,1)
+      ax.set_title("Best pair for Camera {} (Custom)".format(CamId))
+      VisualiserX.drawCamMap(ax, CamMapsPolyX[CamId], ErrorMapXlim, ErrorMapYlim, highlight_id=CamId)
+      VisualiserX.drawSystem(ax, highlight_id=CamId)
+      ax.set(xlim=Xlim, ylim=Ylim)
+      ax.grid()
+      plt.tight_layout()
+      plt.savefig("CustomCam_Cam{}.pdf".format(CamId))
+      if DisplayFigs: plt.show()
 
 
 if DrawSimplifiedErrLinear:
@@ -918,7 +1122,11 @@ if DrawSimplifiedErrLinear:
   ErrorMapXlim = (-Distance, Distance)
   ErrorMapYlim = (- 1.2 * Distance, 1.2*Distance)
 
-  (ErrorMapsSimpleL, CamMapsSimpleL) = EstimatorL.calculateDeltaDistanceMapsSimplifiedForLinear(ErrorMapXlim, ErrorMapYlim, ErrorMapResolution)
+  try:
+    (ErrorMapsSimpleL, CamMapsSimpleL) = (ErrorMapsPolyL, CamMapsPolyL)
+  except:
+    (ErrorMapsSimpleL, CamMapsSimpleL) = EstimatorL.calculateDeltaDistanceMapsSimplifiedForLinear(ErrorMapXlim, ErrorMapYlim, ErrorMapResolution)
+    
   ErrorMapSimpleL = np.full((ErrorMapResolution, ErrorMapResolution), np.finfo(np.float64).max, dtype=np.float64)
   for ErrorMap in ErrorMapsSimpleL: 
     ErrorMapSimpleL = np.minimum(ErrorMapSimpleL, ErrorMap)
@@ -942,7 +1150,11 @@ if DrawSimplifiedErrCircular:
   ErrorMapXlim = (-Distance, Distance)
   ErrorMapYlim = (- 1.2 * Distance, 1.2*Distance)
 
-  (ErrorMapsSimpleC, CamMapsPolyC) = EstimatorC.calculateDeltaDistanceMapsSimplifiedForCircular(ErrorMapXlim, ErrorMapYlim, ErrorMapResolution)
+  try:
+    (ErrorMapsSimpleC, CamMapsPolyC) = (ErrorMapsPolyC, CamMapsPolyC)
+  except:
+    (ErrorMapsSimpleC, CamMapsPolyC) = EstimatorC.calculateDeltaDistanceMapsSimplifiedForCircular(ErrorMapXlim, ErrorMapYlim, ErrorMapResolution)
+  
   ErrorMapSimpleC = np.full((ErrorMapResolution, ErrorMapResolution), np.finfo(np.float64).max, dtype=np.float64)
 
   for ErrorMap in ErrorMapsSimpleC: 
@@ -958,3 +1170,6 @@ if DrawSimplifiedErrCircular:
   plt.tight_layout()
   plt.savefig("CircularErrSimplified.pdf")
   if DisplayFigs: plt.show()
+
+time2 = time.time()
+print(f"time elapsed: {time2 - time1} seconds")
